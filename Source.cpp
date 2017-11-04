@@ -7,15 +7,52 @@
 using namespace cv;
 using namespace std;
 
-//Convert to grayscale and find edges using canny
-Mat cannyImage(const Mat source)
+#define THRESH_LOW 5
+#define THRESH_HIGH 50
+#define APERTURE 3 // 3 or 5
+#define KSIZE_X 5
+#define KSIZE_Y 5
+#define GAUSSIAN_X 0
+#define CURVE_SIZE_IGNORING_MARGIN 2000
+
+//Canny R, G, B or whole image
+Mat cannyImage(const Mat source, const int BGR)
 {
-	Mat gray;
-	cvtColor(source, gray, CV_BGR2GRAY);
+	Mat planes[3];
+	split(source, planes);
 
 	Mat result;
-	Canny(gray, result, 100, 200, 5);
+	if (BGR == 1)//B
+	{
+		Mat blurredGray;
+		GaussianBlur(planes[0], blurredGray, Size(KSIZE_X, KSIZE_Y), GAUSSIAN_X);
 
+		Canny(blurredGray, result, THRESH_LOW, THRESH_HIGH, APERTURE);
+	}
+	else if (BGR == 2)//G
+	{
+		Mat blurredGray;
+		GaussianBlur(planes[1], blurredGray, Size(KSIZE_X, KSIZE_Y), GAUSSIAN_X);
+
+		Canny(blurredGray, result, THRESH_LOW, THRESH_HIGH, APERTURE);
+	}
+	else if (BGR == 3)//R
+	{
+		Mat blurredGray;
+		GaussianBlur(planes[2], blurredGray, Size(KSIZE_X, KSIZE_Y), GAUSSIAN_X);
+
+		Canny(blurredGray, result, THRESH_LOW, THRESH_HIGH, APERTURE);
+	}
+	else
+	{
+		Mat gray;
+		cvtColor(source, gray, CV_BGR2GRAY);
+
+		Mat blurredGray;
+		GaussianBlur(gray, blurredGray, Size(KSIZE_X, KSIZE_Y), GAUSSIAN_X);
+
+		Canny(blurredGray, result, THRESH_LOW, THRESH_HIGH, APERTURE);
+	}
 	return result;
 }
 
@@ -25,7 +62,6 @@ bool handleEmptyImage(const Mat source)
 	if (source.empty())
 	{
 		cout << "Image didn't load properly" << endl;
-		cout << "Shutting down application" << endl;
 		Sleep(2000);
 		return true;
 	}
@@ -35,7 +71,7 @@ bool handleEmptyImage(const Mat source)
 //Show first image, image with edges detected and changed image
 void showImages(const Mat source, const Mat edges, const Mat result)
 {
-	imshow("Source", source);
+	//imshow("Source", source);
 	imshow("Edges", edges);
 	imshow("Result", result);
 }
@@ -72,7 +108,7 @@ int approximateColourInSquare(const Mat sourceHSV, const Point center, int radiu
 	return 2 * colour / amountOfPixels;
 }
 
-bool isTriangleYellow(const Mat sourceHSV, vector<Point> triangle)
+bool isTriangleRed(const Mat sourceHSV, vector<Point> triangle)
 {
 	Point massCenter = massCenterOfCurve(triangle);
 	int radius = norm(triangle[0] - triangle[1]) * 2;
@@ -81,9 +117,9 @@ bool isTriangleYellow(const Mat sourceHSV, vector<Point> triangle)
 		int candidate = norm(triangle[i] - massCenter);
 		radius = candidate < radius ? candidate : radius;
 	}
-	radius /= 4;
+	radius /= 16;
 	int colour = approximateColourInSquare(sourceHSV, massCenter, radius);
-	if (colour > 30 && colour < 75)
+	if (colour < 30 || colour > 315)
 		return true;
 	return false;
 }
@@ -106,42 +142,85 @@ void findShapes(const Mat sourceHSV, Mat result, vector<vector<Point>> curves)
 	for (int i = 0; i < curves.size(); i++)
 	{
 		approxPolyDP(Mat(curves[i]), approx_curve, arcLength(Mat(curves[i]), true)*0.02, true);
-		if (fabs(contourArea(curves[i])) < 100 || !isContourConvex(approx_curve)) // ignore if curve is not convex or its relatively small
+		if (fabs(contourArea(curves[i])) < CURVE_SIZE_IGNORING_MARGIN ||
+			!isContourConvex(approx_curve)) // ignore if curve is not convex or its relatively small
 			continue;
 		if (approx_curve.size() == 3)
 		{
-			if (isTriangleYellow(sourceHSV, approx_curve))
+			if (isTriangleRed(sourceHSV, approx_curve))
 			{
-				setLabel(result, "T", curves[i]);
+				setLabel(result, "Trojkat", curves[i]);
 			}
 		}
 		else if (approx_curve.size() == 4)
 		{
 			if (isSquareBlue(sourceHSV, approx_curve))
 			{
-				setLabel(result, "S", curves[i]);
+				setLabel(result, "Kwadrat", curves[i]);
 			}
 		}
 	}	
 }
 
+void handleFrame(Mat frame, int wait = 1)
+{
+	Mat sourceHSV;
+	cvtColor(frame, sourceHSV, CV_BGR2HSV);
+	Mat resultImage = frame.clone();
+	if (handleEmptyImage(frame))
+		return;
+
+	Mat edgesImageBGR = cannyImage(frame, 0);
+	Mat edgesImageB = cannyImage(frame, 1);
+	Mat edgesImageG = cannyImage(frame, 2);
+	Mat edgesImageR = cannyImage(frame, 3);
+	vector<vector<Point>> curves, curves1, curves2, curves3;
+
+	findContours(edgesImageBGR, curves, RETR_TREE, CHAIN_APPROX_SIMPLE);
+	findShapes(sourceHSV, resultImage, curves);
+	
+	findContours(edgesImageB, curves1, RETR_TREE, CHAIN_APPROX_SIMPLE);
+	findShapes(sourceHSV, resultImage, curves1);
+
+	findContours(edgesImageG, curves2, RETR_TREE, CHAIN_APPROX_SIMPLE);
+	findShapes(sourceHSV, resultImage, curves2);
+
+	findContours(edgesImageR, curves3, RETR_TREE, CHAIN_APPROX_SIMPLE);
+	findShapes(sourceHSV, resultImage, curves3);
+	
+	showImages(frame, edgesImageBGR, resultImage);
+	waitKey(wait);
+}
+
+void handleFileProcessing()
+{
+	string path = "G:/image.jpg";
+	Mat frame = imread(path);
+	handleFrame(frame, 0);
+}
+
+void handleCameraProcessing()
+{
+	Mat frame;
+	VideoCapture cap;
+	if (!cap.open(0))
+		return;
+	for (;;)
+	{
+		cap >> frame;
+		handleFrame(frame);
+	}
+}
+
 int main()
 {
-	string path = "C:/input/h.png";
-	Mat sourceImage = imread(path);
-	Mat sourceHSV;
-	cvtColor(sourceImage, sourceHSV, CV_BGR2HSV);
-	Mat resultImage = sourceImage.clone();
-	if (handleEmptyImage(sourceImage))
-		return -1;
-	Mat edgesImage = cannyImage(sourceImage);
-	
-	vector<vector<Point>> curves;
-	findContours(edgesImage, curves, RETR_TREE, CHAIN_APPROX_SIMPLE);
+	int CAMERA_OR_FILE = 1;//1 for input from camera, 0 for input from file
 
-	findShapes(sourceHSV, resultImage, curves);
-
-	showImages(sourceImage, edgesImage, resultImage);
-	waitKey(0);
+	if (CAMERA_OR_FILE == 1)
+		handleCameraProcessing();
+	else if (CAMERA_OR_FILE == 0)
+		handleFileProcessing();
+	else
+		cout << "Invalid source" << endl;
 	return 0;
 }
