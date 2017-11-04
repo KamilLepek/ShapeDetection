@@ -20,7 +20,7 @@ Mat cannyImage(const Mat source)
 }
 
 //Handle situation when the image didn't load properly
-bool handleEmptyImage(Mat source)
+bool handleEmptyImage(const Mat source)
 {
 	if (source.empty())
 	{
@@ -33,15 +33,73 @@ bool handleEmptyImage(Mat source)
 }
 
 //Show first image, image with edges detected and changed image
-void showImages(Mat source, Mat edges, Mat result)
+void showImages(const Mat source, const Mat edges, const Mat result)
 {
 	imshow("Source", source);
 	imshow("Edges", edges);
 	imshow("Result", result);
 }
 
+//Returns mass center of closed curve
+Point massCenterOfCurve(vector<Point> curve)
+{
+	Moments moment = moments(curve, false);
+	return Point(moment.m10 / moment.m00, moment.m01 / moment.m00);
+}
+
+//Sets given label in the image on specified curve center of mass
+void setLabel(const Mat image, const string label, vector<Point> curve)
+{
+	putText(image, label, massCenterOfCurve(curve), 16, 0.5, CV_RGB(0, 0, 0), 1, 8);
+}
+
+//Returns average hue of pixels specified in a square 2*radius x 2*radius with specified center (all in HSV)
+int approximateColourInSquare(const Mat sourceHSV, const Point center, int radius)
+{	
+	int colour = sourceHSV.at<Vec3b>(center.y, center.x)[0];
+
+	int amountOfPixels = 1;
+
+	for (int i = -radius; i <= radius; i++)
+	{
+		for (int j = -radius; j <= radius; j++)
+		{
+			colour += sourceHSV.at<Vec3b>(center.y + j, center.x + i)[0];
+			amountOfPixels++;
+		}
+	}
+
+	return 2 * colour / amountOfPixels;
+}
+
+bool isTriangleYellow(const Mat sourceHSV, vector<Point> triangle)
+{
+	Point massCenter = massCenterOfCurve(triangle);
+	int radius = norm(triangle[0] - triangle[1]) * 2;
+	for (int i = 0; i < triangle.size(); i++)
+	{
+		int candidate = norm(triangle[i] - massCenter);
+		radius = candidate < radius ? candidate : radius;
+	}
+	radius /= 4;
+	int colour = approximateColourInSquare(sourceHSV, massCenter, radius);
+	if (colour > 30 && colour < 75)
+		return true;
+	return false;
+}
+
+bool isSquareBlue(const Mat sourceHSV, vector<Point> square)
+{
+	Point massCenter = massCenterOfCurve(square);
+	int radius = norm(square[0] - massCenter) / 4; //size of the rectangle in which we will check the colour 
+	int colour = approximateColourInSquare(sourceHSV, massCenter, radius);
+	if (colour > 170 && colour < 280)
+		return true;
+	return false;
+}
+
 //Find shapes in a given set of curves and generate changed image
-void findShapes(Mat result, vector<vector<Point>> curves)
+void findShapes(const Mat sourceHSV, Mat result, vector<vector<Point>> curves)
 {
 	cout << "Curves found: " << curves.size() << endl;
 	vector<Point> approx_curve;
@@ -52,25 +110,36 @@ void findShapes(Mat result, vector<vector<Point>> curves)
 			continue;
 		if (approx_curve.size() == 3)
 		{
-			cout << "Found triangle" << endl;
+			if (isTriangleYellow(sourceHSV, approx_curve))
+			{
+				setLabel(result, "T", curves[i]);
+			}
 		}
-	}
+		else if (approx_curve.size() == 4)
+		{
+			if (isSquareBlue(sourceHSV, approx_curve))
+			{
+				setLabel(result, "S", curves[i]);
+			}
+		}
+	}	
 }
 
 int main()
 {
 	string path = "C:/input/h.png";
 	Mat sourceImage = imread(path);
+	Mat sourceHSV;
+	cvtColor(sourceImage, sourceHSV, CV_BGR2HSV);
 	Mat resultImage = sourceImage.clone();
 	if (handleEmptyImage(sourceImage))
 		return -1;
 	Mat edgesImage = cannyImage(sourceImage);
 	
 	vector<vector<Point>> curves;
-	vector<Point> approx_curve;
 	findContours(edgesImage, curves, RETR_TREE, CHAIN_APPROX_SIMPLE);
 
-	findShapes(resultImage, curves);
+	findShapes(sourceHSV, resultImage, curves);
 
 	showImages(sourceImage, edgesImage, resultImage);
 	waitKey(0);
