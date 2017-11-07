@@ -7,30 +7,50 @@
 using namespace cv;
 using namespace std;
 
-#define THRESH_LOW 5
-#define THRESH_HIGH 50
-#define APERTURE 3 // 3 or 5
+//Canny params
+#define THRESH_LOW 5 // low threshold for canny process
+#define THRESH_HIGH 50 // high treshold for canny process
+#define APERTURE 3 // 3 or 5 - param for canny process
+
+//Gaussian params
 #define KSIZE_X 5
 #define KSIZE_Y 5
 #define GAUSSIAN_X 0
+
+//Curves smaller than this will be ignored in computing
 #define CURVE_SIZE_IGNORING_MARGIN 2000
-#define FRAME_NUMBER 4
 
-#define TEST_MULTIPLE_TIMES
+//Number of frames that are being read from files for each character
+#define FRAME_NUMBER 11
 
+//After this amount of frames of not being detected character dissapears
+//(implemented in order to avoid character dissapearing or loosing animation if 1 frame out of nowhere doesnt recognize edges)
 #define IDLE_FRAMES_TO_DISAPPEAR 20
 
+//if defined then we get better edge detection but we loose performance
+#define TEST_MULTIPLE_TIMES
+
+//Vegeta and goku animations
 Mat vegeta[FRAME_NUMBER];
 Mat goku[FRAME_NUMBER];
 
+//Characters coordinates on map
 Point vegetaPoint;
-Size vegetaSize;
 Point gokuPoint;
+
+//These determine how much we need to resize the original image in order to "fit"
+Size vegetaSize;
 Size gokuSize;
 
+//Determines whether character should be on map atm
 bool vegetaFlag = false;
 bool gokuFlag = false;
 
+//Indexes of frame a the moment
+int vegiFrameIndex = 0;
+int gokuFrameIndex = 0;
+
+//Canny 2-d matrix (R G or B plane)
 Mat cannyPlane(Mat plane)
 {
 	Mat result;
@@ -91,7 +111,7 @@ bool handleEmptyImage(const Mat source)
 	return false;
 }
 
-//Show image with edges detected and changed image
+//Show image with edges detected and changed image(result)
 void showImages(const Mat edges, const Mat result)
 {
 	imshow("Edges", edges);
@@ -156,19 +176,19 @@ bool isSquareBlue(const Mat sourceHSV, vector<Point> square)
 	return false;
 }
 
+
 void drawVegetaCharging(Mat result, vector<Point> curve)
 {
 	Point center = massCenterOfCurve(curve);
 	vegetaFlag = true;
 	vegetaPoint = center;
 	Mat veg;
-	int vegIndex = 0;//swap here
 	int dist = norm(curve[0] - curve[1]);
 	dist = dist % 2 == 1 ? dist - 5 : dist - 4;
-	int xDist = dist * vegeta[vegIndex].cols / vegeta[vegIndex].rows;
+	int xDist = dist * vegeta[vegiFrameIndex].cols / vegeta[vegiFrameIndex].rows;
 	Size size(xDist - xDist % 2, dist);
 	vegetaSize = size;
-	resize(vegeta[vegIndex], veg, size);
+	resize(vegeta[vegiFrameIndex], veg, size);
 
 	veg.copyTo(result.rowRange(center.y - veg.rows / 2, center.y + veg.rows / 2).
 		colRange(center.x - veg.cols / 2, center.x + veg.cols / 2));
@@ -189,15 +209,25 @@ void drawMissingVegeta(Mat result)
 	if (vegetaFlag == true)
 	{
 		Mat veg;
-		int vegIndex = 0;//swap here
-		resize(vegeta[vegIndex], veg, vegetaSize);
+		resize(vegeta[vegiFrameIndex], veg, vegetaSize);
 		veg.copyTo(result.rowRange(vegetaPoint.y - veg.rows / 2, vegetaPoint.y + veg.rows / 2).
 			colRange(vegetaPoint.x - veg.cols / 2, vegetaPoint.x + veg.cols / 2));
 	}
 }
 
+//To loop "charging animations"
+void incrementFrameIndex()
+{
+	vegiFrameIndex++;
+	gokuFrameIndex++;
+	if (vegiFrameIndex == 4)
+		vegiFrameIndex = 1;
+	if (gokuFrameIndex == 4)
+		gokuFrameIndex = 1;
+}
+
 //Find shapes in a given set of curves and generate changed image
-void findShapes(const Mat sourceHSV, Mat result, vector<vector<Point>> curves)
+void findShapesAndDrawCharacters(const Mat sourceHSV, Mat result, vector<vector<Point>> curves)
 {
 	cout << "Curves found: " << curves.size() << endl;
 	vector<Point> approx_curve;
@@ -229,8 +259,10 @@ void findShapes(const Mat sourceHSV, Mat result, vector<vector<Point>> curves)
 		{
 			vegetaIterator = 0;
 			vegetaFlag = false;
+			vegiFrameIndex = 0;
 		}
 	}
+	incrementFrameIndex();
 }
 
 void handleFrame(Mat frame, int wait = 1)
@@ -244,7 +276,7 @@ void handleFrame(Mat frame, int wait = 1)
 	Mat edgesImageBGR = cannyImage(frame, 0);
 	vector<vector<Point>> curves;
 	findContours(edgesImageBGR, curves, RETR_TREE, CHAIN_APPROX_SIMPLE);
-	findShapes(sourceHSV, resultImage, curves);
+	findShapesAndDrawCharacters(sourceHSV, resultImage, curves);
 
 #ifdef TEST_MULTIPLE_TIMESn
 	Mat edgesImageB = cannyImage(frame, 1);
@@ -253,25 +285,19 @@ void handleFrame(Mat frame, int wait = 1)
 	vector<vector<Point>> curves1, curves2, curves3;
 	
 	findContours(edgesImageB, curves1, RETR_TREE, CHAIN_APPROX_SIMPLE);
-	findShapes(sourceHSV, resultImage, curves1);
+	findShapesAndDrawCharacters(sourceHSV, resultImage, curves1);
 
 	findContours(edgesImageG, curves2, RETR_TREE, CHAIN_APPROX_SIMPLE);
-	findShapes(sourceHSV, resultImage, curves2);
+	findShapesAndDrawCharacters(sourceHSV, resultImage, curves2);
 
 	findContours(edgesImageR, curves3, RETR_TREE, CHAIN_APPROX_SIMPLE);
-	findShapes(sourceHSV, resultImage, curves3);
+	findShapesAndDrawCharacters(sourceHSV, resultImage, curves3);
 #endif
 	showImages(edgesImageBGR, resultImage);
 	waitKey(wait);
 }
 
-void handleFileProcessing()
-{
-	string path = "G:/image.jpg";
-	Mat frame = imread(path);
-	handleFrame(frame, 0);
-}
-
+//Main loop of the program
 void handleCameraProcessing()
 {
 	Mat frame;
@@ -285,6 +311,7 @@ void handleCameraProcessing()
 	}
 }
 
+// Method to initialize frames of goku and vegeta from files
 void initializeGokuAndVegetaImages(Mat *vegeta, Mat *goku)
 {
 	for (int i = 0; i < FRAME_NUMBER; i++)
@@ -300,14 +327,6 @@ void initializeGokuAndVegetaImages(Mat *vegeta, Mat *goku)
 int main()
 {
 	initializeGokuAndVegetaImages(vegeta, goku);
-
-	int CAMERA_OR_FILE = 1;//1 for input from camera, 0 for input from file
-
-	if (CAMERA_OR_FILE == 1)
-		handleCameraProcessing();
-	else if (CAMERA_OR_FILE == 0)
-		handleFileProcessing();
-	else
-		cout << "Invalid source" << endl;
+	handleCameraProcessing();
 	return 0;
 }
