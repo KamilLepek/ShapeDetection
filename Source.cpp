@@ -14,6 +14,12 @@ using namespace std;
 #define KSIZE_Y 5
 #define GAUSSIAN_X 0
 #define CURVE_SIZE_IGNORING_MARGIN 2000
+#define FRAME_NUMBER 4
+
+#define TEST_MULTIPLE_TIMES
+
+Mat vegeta[FRAME_NUMBER];
+Mat goku[FRAME_NUMBER];
 
 //Canny R, G, B or whole image
 //BGR: 1-B, 2-G, 3-R, else - grayscale whole
@@ -134,6 +140,26 @@ bool isSquareBlue(const Mat sourceHSV, vector<Point> square)
 	return false;
 }
 
+void drawVegetaCharging(Mat result, vector<Point> curve)
+{
+	Point center = massCenterOfCurve(curve);
+	Mat veg;
+	int vegIndex = 0;//swap here
+	int dist = norm(curve[0] - curve[1]);
+	dist = dist % 2 == 1 ? dist - 5 : dist - 4;
+	int xDist = dist * vegeta[vegIndex].cols / vegeta[vegIndex].rows;
+	Size size(xDist - xDist % 2, dist);
+	resize(vegeta[vegIndex], veg, size);
+
+	veg.copyTo(result.rowRange(center.y - veg.rows / 2, center.y + veg.rows / 2).
+		colRange(center.x - veg.cols / 2, center.x + veg.cols / 2));
+}
+
+void drawGokuCharging(Mat result, vector<Point> curve)
+{
+	
+}
+
 //Find shapes in a given set of curves and generate changed image
 void findShapes(const Mat sourceHSV, Mat result, vector<vector<Point>> curves)
 {
@@ -149,6 +175,7 @@ void findShapes(const Mat sourceHSV, Mat result, vector<vector<Point>> curves)
 		{
 			if (isTriangleRed(sourceHSV, approx_curve))
 			{
+				drawGokuCharging(result, approx_curve);
 				setLabel(result, "Trojkat", curves[i]);
 			}
 		}
@@ -156,7 +183,7 @@ void findShapes(const Mat sourceHSV, Mat result, vector<vector<Point>> curves)
 		{
 			if (isSquareBlue(sourceHSV, approx_curve))
 			{
-				setLabel(result, "Kwadrat", curves[i]);
+				drawVegetaCharging(result, approx_curve);
 			}
 		}
 	}	
@@ -169,15 +196,17 @@ void handleFrame(Mat frame, int wait = 1)
 	Mat resultImage = frame.clone();
 	if (handleEmptyImage(frame))
 		return;
-
+	
 	Mat edgesImageBGR = cannyImage(frame, 0);
+	vector<vector<Point>> curves;
+	findContours(edgesImageBGR, curves, RETR_TREE, CHAIN_APPROX_SIMPLE);
+	findShapes(sourceHSV, resultImage, curves);
+
+#ifdef TEST_MULTIPLE_TIMES
 	Mat edgesImageB = cannyImage(frame, 1);
 	Mat edgesImageG = cannyImage(frame, 2);
 	Mat edgesImageR = cannyImage(frame, 3);
-	vector<vector<Point>> curves, curves1, curves2, curves3;
-
-	findContours(edgesImageBGR, curves, RETR_TREE, CHAIN_APPROX_SIMPLE);
-	findShapes(sourceHSV, resultImage, curves);
+	vector<vector<Point>> curves1, curves2, curves3;
 	
 	findContours(edgesImageB, curves1, RETR_TREE, CHAIN_APPROX_SIMPLE);
 	findShapes(sourceHSV, resultImage, curves1);
@@ -187,7 +216,7 @@ void handleFrame(Mat frame, int wait = 1)
 
 	findContours(edgesImageR, curves3, RETR_TREE, CHAIN_APPROX_SIMPLE);
 	findShapes(sourceHSV, resultImage, curves3);
-	
+#endif
 	showImages(edgesImageBGR, resultImage);
 	waitKey(wait);
 }
@@ -212,8 +241,22 @@ void handleCameraProcessing()
 	}
 }
 
+void initializeGokuAndVegetaImages(Mat *vegeta, Mat *goku)
+{
+	for (int i = 0; i < FRAME_NUMBER; i++)
+	{
+		stringstream veg, gok;
+		veg << "ANIMATIONS/vegeta/" << i << ".jpg";
+		gok << "ANIMATIONS/goku/" << i << ".jpg";
+		vegeta[i] = imread(veg.str());
+		goku[i] = imread(gok.str());
+	}
+}
+
 int main()
 {
+	initializeGokuAndVegetaImages(vegeta, goku);
+
 	int CAMERA_OR_FILE = 1;//1 for input from camera, 0 for input from file
 
 	if (CAMERA_OR_FILE == 1)
