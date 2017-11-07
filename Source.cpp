@@ -18,8 +18,28 @@ using namespace std;
 
 #define TEST_MULTIPLE_TIMES
 
+#define IDLE_FRAMES_TO_DISAPPEAR 20
+
 Mat vegeta[FRAME_NUMBER];
 Mat goku[FRAME_NUMBER];
+
+Point vegetaPoint;
+Size vegetaSize;
+Point gokuPoint;
+Size gokuSize;
+
+bool vegetaFlag = false;
+bool gokuFlag = false;
+
+Mat cannyPlane(Mat plane)
+{
+	Mat result;
+	Mat blurredGray;
+	GaussianBlur(plane, blurredGray, Size(KSIZE_X, KSIZE_Y), GAUSSIAN_X);
+
+	Canny(blurredGray, result, THRESH_LOW, THRESH_HIGH, APERTURE);
+	return result;
+}
 
 //Canny R, G, B or whole image
 //BGR: 1-B, 2-G, 3-R, else - grayscale whole
@@ -29,26 +49,22 @@ Mat cannyImage(const Mat source, const int BGR)
 	split(source, planes);
 
 	Mat result;
-	if (BGR == 1)//B
+	if (BGR != 0)
 	{
-		Mat blurredGray;
-		GaussianBlur(planes[0], blurredGray, Size(KSIZE_X, KSIZE_Y), GAUSSIAN_X);
-
-		Canny(blurredGray, result, THRESH_LOW, THRESH_HIGH, APERTURE);
-	}
-	else if (BGR == 2)//G
-	{
-		Mat blurredGray;
-		GaussianBlur(planes[1], blurredGray, Size(KSIZE_X, KSIZE_Y), GAUSSIAN_X);
-
-		Canny(blurredGray, result, THRESH_LOW, THRESH_HIGH, APERTURE);
-	}
-	else if (BGR == 3)//R
-	{
-		Mat blurredGray;
-		GaussianBlur(planes[2], blurredGray, Size(KSIZE_X, KSIZE_Y), GAUSSIAN_X);
-
-		Canny(blurredGray, result, THRESH_LOW, THRESH_HIGH, APERTURE);
+		switch (BGR)
+		{
+			case 1:
+				result = cannyPlane(planes[0]);
+				break;
+			case 2:
+				result = cannyPlane(planes[1]);
+				break;
+			case 3:
+				result = cannyPlane(planes[2]);
+				break;
+			default:
+				break;
+		}
 	}
 	else
 	{
@@ -143,12 +159,15 @@ bool isSquareBlue(const Mat sourceHSV, vector<Point> square)
 void drawVegetaCharging(Mat result, vector<Point> curve)
 {
 	Point center = massCenterOfCurve(curve);
+	vegetaFlag = true;
+	vegetaPoint = center;
 	Mat veg;
 	int vegIndex = 0;//swap here
 	int dist = norm(curve[0] - curve[1]);
 	dist = dist % 2 == 1 ? dist - 5 : dist - 4;
 	int xDist = dist * vegeta[vegIndex].cols / vegeta[vegIndex].rows;
 	Size size(xDist - xDist % 2, dist);
+	vegetaSize = size;
 	resize(vegeta[vegIndex], veg, size);
 
 	veg.copyTo(result.rowRange(center.y - veg.rows / 2, center.y + veg.rows / 2).
@@ -160,33 +179,58 @@ void drawGokuCharging(Mat result, vector<Point> curve)
 	
 }
 
+void drawMissingGoku(Mat result)
+{
+	
+}
+
+void drawMissingVegeta(Mat result)
+{
+	if (vegetaFlag == true)
+	{
+		Mat veg;
+		int vegIndex = 0;//swap here
+		resize(vegeta[vegIndex], veg, vegetaSize);
+		veg.copyTo(result.rowRange(vegetaPoint.y - veg.rows / 2, vegetaPoint.y + veg.rows / 2).
+			colRange(vegetaPoint.x - veg.cols / 2, vegetaPoint.x + veg.cols / 2));
+	}
+}
+
 //Find shapes in a given set of curves and generate changed image
 void findShapes(const Mat sourceHSV, Mat result, vector<vector<Point>> curves)
 {
 	cout << "Curves found: " << curves.size() << endl;
 	vector<Point> approx_curve;
+	bool vegetaHasBeenPrinted = false;
+	static int vegetaIterator = 0; //frames in which vegeta wasnt printed by our alghoritm
 	for (int i = 0; i < curves.size(); i++)
 	{
 		approxPolyDP(Mat(curves[i]), approx_curve, arcLength(Mat(curves[i]), true)*0.02, true);
 		if (fabs(contourArea(curves[i])) < CURVE_SIZE_IGNORING_MARGIN ||
 			!isContourConvex(approx_curve)) // ignore if curve is not convex or its relatively small
 			continue;
-		if (approx_curve.size() == 3)
+		if (approx_curve.size() == 3 && isTriangleRed(sourceHSV, approx_curve))
 		{
-			if (isTriangleRed(sourceHSV, approx_curve))
-			{
-				drawGokuCharging(result, approx_curve);
-				setLabel(result, "Trojkat", curves[i]);
-			}
+			drawGokuCharging(result, approx_curve);
+			setLabel(result, "Trojkat", curves[i]);
 		}
-		else if (approx_curve.size() == 4)
+		else if (approx_curve.size() == 4 && isSquareBlue(sourceHSV, approx_curve))
 		{
-			if (isSquareBlue(sourceHSV, approx_curve))
-			{
-				drawVegetaCharging(result, approx_curve);
-			}
+			vegetaHasBeenPrinted = true;
+			drawVegetaCharging(result, approx_curve);
+			vegetaIterator = 0;
 		}
 	}	
+	if (vegetaHasBeenPrinted == false)
+	{
+		drawMissingVegeta(result);
+		vegetaIterator++;
+		if (vegetaIterator > IDLE_FRAMES_TO_DISAPPEAR)
+		{
+			vegetaIterator = 0;
+			vegetaFlag = false;
+		}
+	}
 }
 
 void handleFrame(Mat frame, int wait = 1)
@@ -202,7 +246,7 @@ void handleFrame(Mat frame, int wait = 1)
 	findContours(edgesImageBGR, curves, RETR_TREE, CHAIN_APPROX_SIMPLE);
 	findShapes(sourceHSV, resultImage, curves);
 
-#ifdef TEST_MULTIPLE_TIMES
+#ifdef TEST_MULTIPLE_TIMESn
 	Mat edgesImageB = cannyImage(frame, 1);
 	Mat edgesImageG = cannyImage(frame, 2);
 	Mat edgesImageR = cannyImage(frame, 3);
