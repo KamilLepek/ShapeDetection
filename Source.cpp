@@ -16,6 +16,7 @@ using namespace std;
 #define CURVE_SIZE_IGNORING_MARGIN 2000
 
 //Canny R, G, B or whole image
+//BGR: 1-B, 2-G, 3-R, else - grayscale whole
 Mat cannyImage(const Mat source, const int BGR)
 {
 	Mat planes[3];
@@ -68,10 +69,9 @@ bool handleEmptyImage(const Mat source)
 	return false;
 }
 
-//Show first image, image with edges detected and changed image
-void showImages(const Mat source, const Mat edges, const Mat result)
+//Show image with edges detected and changed image
+void showImages(const Mat edges, const Mat result)
 {
-	//imshow("Source", source);
 	imshow("Edges", edges);
 	imshow("Result", result);
 }
@@ -105,7 +105,7 @@ int approximateColourInSquare(const Mat sourceHSV, const Point center, int radiu
 		}
 	}
 
-	return 2 * colour / amountOfPixels;
+	return 2 * colour / amountOfPixels; // 2 * cause openCV holds hue in [0,180] while the angle might change up to 360
 }
 
 bool isTriangleRed(const Mat sourceHSV, vector<Point> triangle)
@@ -117,9 +117,9 @@ bool isTriangleRed(const Mat sourceHSV, vector<Point> triangle)
 		int candidate = norm(triangle[i] - massCenter);
 		radius = candidate < radius ? candidate : radius;
 	}
-	radius /= 16;
+	radius /= 4;
 	int colour = approximateColourInSquare(sourceHSV, massCenter, radius);
-	if (colour < 30 || colour > 315)
+	if (colour < 40 || colour > 310)
 		return true;
 	return false;
 }
@@ -188,7 +188,7 @@ void handleFrame(Mat frame, int wait = 1)
 	findContours(edgesImageR, curves3, RETR_TREE, CHAIN_APPROX_SIMPLE);
 	findShapes(sourceHSV, resultImage, curves3);
 	
-	showImages(frame, edgesImageBGR, resultImage);
+	showImages(edgesImageBGR, resultImage);
 	waitKey(wait);
 }
 
