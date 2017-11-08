@@ -27,8 +27,13 @@ using namespace std;
 //(implemented in order to avoid character dissapearing or loosing animation if 1 frame out of nowhere doesnt recognize edges)
 #define IDLE_FRAMES_TO_DISAPPEAR 20
 
+//Constant which we multiple size of image to draw it inside curve
+#define IMAGE_SIZE_IN_CURVE 0.66
+
 //if defined then we get better edge detection but we loose performance
 #define TEST_MULTIPLE_TIMES
+
+enum character {Vegeta, Goku};
 
 //Vegeta and goku animations
 Mat vegeta[FRAME_NUMBER];
@@ -176,42 +181,94 @@ bool isSquareBlue(const Mat sourceHSV, vector<Point> square)
 	return false;
 }
 
+//Calculates size of hero image bigger dimension that is required in order to resize original image
+int calculateBiggerDimensionSize(vector<Point> curve)
+{
+	int dist = INT_MAX;
+	for (int i = 0; i < curve.size(); i++)
+	{
+		for (int j = 0; j < curve.size(); j++)
+		{
+			if (i != j)
+			{
+				if (norm(curve[i] - curve[j]) < dist)
+					dist = norm(curve[i] - curve[j]);
+			}
+		}
+	}
+	//%2 to ensure its dividable by 2
+	dist = dist * IMAGE_SIZE_IN_CURVE;
+	return dist - dist % 2;
+}
 
-void drawVegetaCharging(Mat result, vector<Point> curve)
+//Calculates size of hero image smaller dimension that is required in order to resize original image
+int calculateSmallerDimensionSize(int biggerDimSize, character hero)
+{
+	int dist;
+	if (hero == Vegeta)
+		dist = biggerDimSize * vegeta[vegiFrameIndex].cols / vegeta[vegiFrameIndex].rows;
+	if (hero == Goku)
+		dist = biggerDimSize * goku[gokuFrameIndex].cols / goku[gokuFrameIndex].rows;
+	return dist - dist % 2; //to ensure its dividable by 2
+}
+
+void setHeroProperties(Point center, character hero, Size size)
+{
+	if (hero == Vegeta)
+	{
+		vegetaFlag = true;
+		vegetaPoint = center;
+		vegetaSize = size;
+	}
+	else if (hero == Goku)
+	{
+		gokuFlag = true;
+		gokuPoint = center;
+		gokuSize = size;
+	}
+}
+
+//Resizes hero to desired size property
+Mat resizeHero(character hero)
+{
+	Mat im;
+	if (hero == Vegeta)
+		resize(vegeta[vegiFrameIndex], im, vegetaSize);
+	else if (hero == Goku)
+		resize(goku[gokuFrameIndex], im, gokuSize);
+	return im;
+}
+
+//Draws character charging inside curve
+void drawCharacterCharging(Mat result, vector<Point> curve, character hero)
 {
 	Point center = massCenterOfCurve(curve);
-	vegetaFlag = true;
-	vegetaPoint = center;
-	Mat veg;
-	int dist = norm(curve[0] - curve[1]);
-	dist = dist % 2 == 1 ? dist - 5 : dist - 4;
-	int xDist = dist * vegeta[vegiFrameIndex].cols / vegeta[vegiFrameIndex].rows;
-	Size size(xDist - xDist % 2, dist);
-	vegetaSize = size;
-	resize(vegeta[vegiFrameIndex], veg, size);
-
-	veg.copyTo(result.rowRange(center.y - veg.rows / 2, center.y + veg.rows / 2).
-		colRange(center.x - veg.cols / 2, center.x + veg.cols / 2));
+	int Y = calculateBiggerDimensionSize(curve);
+	int X = calculateSmallerDimensionSize(Y, hero);
+	Size size = Size(X, Y);
+	setHeroProperties(center, hero, size);
+	Mat im = resizeHero(hero);
+	im.copyTo(result.rowRange(center.y - im.rows / 2, center.y + im.rows / 2).
+		colRange(center.x - im.cols / 2, center.x + im.cols / 2));
 }
 
-void drawGokuCharging(Mat result, vector<Point> curve)
+//If we do not recognize our shape once a while we still print the character
+//in order to make it continous
+void drawMissingCharacter(Mat result, character hero)
 {
-	
-}
-
-void drawMissingGoku(Mat result)
-{
-	
-}
-
-void drawMissingVegeta(Mat result)
-{
-	if (vegetaFlag == true)
+	Mat im;
+	if (hero == Vegeta && vegetaFlag == true)
 	{
-		Mat veg;
-		resize(vegeta[vegiFrameIndex], veg, vegetaSize);
-		veg.copyTo(result.rowRange(vegetaPoint.y - veg.rows / 2, vegetaPoint.y + veg.rows / 2).
-			colRange(vegetaPoint.x - veg.cols / 2, vegetaPoint.x + veg.cols / 2));
+		resize(vegeta[vegiFrameIndex], im, vegetaSize);
+		im.copyTo(result.rowRange(vegetaPoint.y - im.rows / 2, vegetaPoint.y + im.rows / 2).
+			colRange(vegetaPoint.x - im.cols / 2, vegetaPoint.x + im.cols / 2));
+
+	}
+	else if (hero == Goku && gokuFlag == true)
+	{
+		resize(goku[gokuFrameIndex], im, gokuSize);
+		im.copyTo(result.rowRange(gokuPoint.y - im.rows / 2, gokuPoint.y + im.rows / 2).
+			colRange(gokuPoint.x - im.cols / 2, gokuPoint.x + im.cols / 2));
 	}
 }
 
@@ -231,8 +288,8 @@ void findShapesAndDrawCharacters(const Mat sourceHSV, Mat result, vector<vector<
 {
 	cout << "Curves found: " << curves.size() << endl;
 	vector<Point> approx_curve;
-	bool vegetaHasBeenPrinted = false;
-	static int vegetaIterator = 0; //frames in which vegeta wasnt printed by our alghoritm
+	bool vegetaHasBeenPrinted = false, gokuHasBeenPrinted = false;
+	static int vegetaIterator = 0, gokuIterator = 0; //frames in which vegeta wasnt printed by our alghoritm
 	for (int i = 0; i < curves.size(); i++)
 	{
 		approxPolyDP(Mat(curves[i]), approx_curve, arcLength(Mat(curves[i]), true)*0.02, true);
@@ -241,25 +298,37 @@ void findShapesAndDrawCharacters(const Mat sourceHSV, Mat result, vector<vector<
 			continue;
 		if (approx_curve.size() == 3 && isTriangleRed(sourceHSV, approx_curve))
 		{
-			drawGokuCharging(result, approx_curve);
-			setLabel(result, "Trojkat", curves[i]);
+			gokuHasBeenPrinted = true;
+			drawCharacterCharging(result, approx_curve, Goku);
+			gokuIterator = 0;
 		}
 		else if (approx_curve.size() == 4 && isSquareBlue(sourceHSV, approx_curve))
 		{
 			vegetaHasBeenPrinted = true;
-			drawVegetaCharging(result, approx_curve);
+			drawCharacterCharging(result, approx_curve, Vegeta);
 			vegetaIterator = 0;
 		}
 	}	
 	if (vegetaHasBeenPrinted == false)
 	{
-		drawMissingVegeta(result);
+		drawMissingCharacter(result, Vegeta);
 		vegetaIterator++;
 		if (vegetaIterator > IDLE_FRAMES_TO_DISAPPEAR)
 		{
 			vegetaIterator = 0;
 			vegetaFlag = false;
 			vegiFrameIndex = 0;
+		}
+	}
+	if (gokuHasBeenPrinted == false)
+	{
+		drawMissingCharacter(result, Goku);
+		gokuIterator++;
+		if (gokuIterator > IDLE_FRAMES_TO_DISAPPEAR)
+		{
+			gokuIterator = 0;
+			gokuFlag = false;
+			gokuFrameIndex = 0;
 		}
 	}
 	incrementFrameIndex();
