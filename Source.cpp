@@ -247,6 +247,38 @@ Mat resizeHero(character hero)
 	return im;
 }
 
+//Masks the background of character image so that we only see the character itself
+Mat mask(Mat characterFrame, Mat partOfWholeImage)
+{
+	Mat outputImage = Mat(characterFrame.size(), characterFrame.type());
+	for (int i = 0; i < outputImage.rows; i++)
+	{
+		for (int j = 0; j < outputImage.cols; j++)
+		{
+			Vec3b pixelOrig = partOfWholeImage.at<Vec3b>(i, j);
+			Vec3b pixelChar = characterFrame.at<Vec3b>(i, j);
+			if (characterFrame.at<Vec3b>(i, j)[1] > 200 && //G
+				characterFrame.at<Vec3b>(i, j)[0] < 150 && //B
+				(characterFrame.at<Vec3b>(i, j)[2] < 200)) //R
+				outputImage.at<Vec3b>(i, j) = pixelOrig;
+			else
+				outputImage.at<Vec3b>(i, j) = pixelChar;
+		}
+	}
+	return outputImage;
+}
+
+Mat flipHeroIfNecessary(Mat image)
+{
+	Mat result;
+	if (vegetaPoint.x < gokuPoint.x)
+	{
+		flip(image, result, 1);
+		return result;
+	}
+	return image;
+}
+
 //Draws character inside curve
 void drawCharacter(Mat result, vector<Point> curve, character hero)
 {
@@ -256,8 +288,14 @@ void drawCharacter(Mat result, vector<Point> curve, character hero)
 	Size size = Size(X, Y);
 	setHeroProperties(center, hero, size);
 	Mat im = resizeHero(hero);
-	im.copyTo(result.rowRange(center.y - im.rows / 2, center.y + im.rows / 2).
-		colRange(center.x - im.cols / 2, center.x + im.cols / 2));
+	Mat partOfResult(result, Range(center.y - im.rows / 2, center.y + im.rows / 2), Range(center.x - im.cols / 2, center.x + im.cols / 2));
+
+	Mat flipped = flipHeroIfNecessary(im);
+
+	Mat out = mask(flipped, partOfResult);
+	
+	out.copyTo(result.rowRange(center.y - out.rows / 2, center.y + out.rows / 2).
+		colRange(center.x - out.cols / 2, center.x + out.cols / 2));
 }
 
 //If we do not recognize our shape once a while we still print the character
@@ -268,15 +306,27 @@ void drawMissingCharacter(Mat result, character hero)
 	if (hero == Vegeta && vegetaFlag == true)
 	{
 		resize(vegeta[vegiFrameIndex], im, vegetaSize);
-		im.copyTo(result.rowRange(vegetaPoint.y - im.rows / 2, vegetaPoint.y + im.rows / 2).
-			colRange(vegetaPoint.x - im.cols / 2, vegetaPoint.x + im.cols / 2));
+		Mat partOfResult(result, Range(vegetaPoint.y - im.rows / 2, vegetaPoint.y + im.rows / 2), Range(vegetaPoint.x - im.cols / 2, vegetaPoint.x + im.cols / 2));
+
+		Mat flipped = flipHeroIfNecessary(im);
+
+		Mat out = mask(flipped, partOfResult);
+
+		out.copyTo(result.rowRange(vegetaPoint.y - out.rows / 2, vegetaPoint.y + out.rows / 2).
+			colRange(vegetaPoint.x - out.cols / 2, vegetaPoint.x + out.cols / 2));
 
 	}
 	else if (hero == Goku && gokuFlag == true)
 	{
 		resize(goku[gokuFrameIndex], im, gokuSize);
-		im.copyTo(result.rowRange(gokuPoint.y - im.rows / 2, gokuPoint.y + im.rows / 2).
-			colRange(gokuPoint.x - im.cols / 2, gokuPoint.x + im.cols / 2));
+		Mat partOfResult(result, Range(gokuPoint.y - im.rows / 2, gokuPoint.y + im.rows / 2), Range(gokuPoint.x - im.cols / 2, gokuPoint.x + im.cols / 2));
+
+		Mat flipped = flipHeroIfNecessary(im);
+
+		Mat out = mask(flipped, partOfResult);
+
+		out.copyTo(result.rowRange(gokuPoint.y - out.rows / 2, gokuPoint.y + out.rows / 2).
+			colRange(gokuPoint.x - out.cols / 2, gokuPoint.x + out.cols / 2));
 	}
 }
 
@@ -329,11 +379,6 @@ void drawMissingCharactersIfNeeded(int *vegetaIterator, int *gokuIterator, bool 
 			gokuFrameIndex = 0;
 		}
 	}
-}
-
-Point centerOfTwoPoints(Point a, Point b)
-{
-	return Point(abs(a.x - b.x), abs(a.y - b.y));
 }
 
 //Find shapes in a given set of curves and generate changed image
@@ -450,5 +495,6 @@ int main()
 	initializeGokuAndVegetaImages(vegeta, goku);
 	handleCameraProcessing();
 	cout << "Application finished processing" << endl;
+	waitKey(0);
 	return 0;
 }
