@@ -21,7 +21,7 @@ using namespace std;
 #define CURVE_SIZE_IGNORING_MARGIN 2000
 
 //Number of frames that are being read from files for each character
-#define FRAME_NUMBER 11
+#define FRAME_NUMBER 12
 
 //After this amount of frames of not being detected character dissapears
 //(implemented in order to avoid character dissapearing or loosing animation if 1 frame out of nowhere doesnt recognize edges)
@@ -30,10 +30,18 @@ using namespace std;
 //Constant which we multiple size of image to draw it inside curve
 #define IMAGE_SIZE_IN_CURVE 0.66
 
+//Determines how many frames both characters have to appear in order to begin fighting
+#define FRAMES_TO_BEGIN_FIGHT 50
+
+//Determines how many frames should we present the same image
+#define FRAMES_PER_IMAGE 10
+
 //if defined then we get better edge detection but we loose performance
 #define TEST_MULTIPLE_TIMES
 
-enum character {Vegeta, Goku};
+enum character { Vegeta, Goku};
+
+VideoCapture cap;
 
 //Vegeta and goku animations
 Mat vegeta[FRAME_NUMBER];
@@ -239,8 +247,8 @@ Mat resizeHero(character hero)
 	return im;
 }
 
-//Draws character charging inside curve
-void drawCharacterCharging(Mat result, vector<Point> curve, character hero)
+//Draws character inside curve
+void drawCharacter(Mat result, vector<Point> curve, character hero)
 {
 	Point center = massCenterOfCurve(curve);
 	int Y = calculateBiggerDimensionSize(curve);
@@ -273,23 +281,69 @@ void drawMissingCharacter(Mat result, character hero)
 }
 
 //To loop "charging animations"
-void incrementFrameIndex()
+void incrementFrameIndex(bool fightingFlag)
 {
-	vegiFrameIndex++;
-	gokuFrameIndex++;
-	if (vegiFrameIndex == 4)
-		vegiFrameIndex = 1;
-	if (gokuFrameIndex == 4)
-		gokuFrameIndex = 1;
+	if (!fightingFlag)
+	{
+		vegiFrameIndex++;
+		gokuFrameIndex++;
+		if (vegiFrameIndex < 1 || vegiFrameIndex > 3)
+			vegiFrameIndex = 1;
+		if (gokuFrameIndex < 1 || gokuFrameIndex > 3)
+			gokuFrameIndex = 1;
+	}
+	else
+	{
+		vegiFrameIndex++;
+		gokuFrameIndex++;
+		if (vegiFrameIndex < 4 || vegiFrameIndex > 11)
+			vegiFrameIndex = 4;
+		if (gokuFrameIndex < 4 || gokuFrameIndex > 11)
+			gokuFrameIndex = 4;
+	}
+}
+
+//Draw characters that have been on the map for a while even if on this frame particular shapes were not detected
+//It creates illusion of continous appearance
+void drawMissingCharactersIfNeeded(int *vegetaIterator, int *gokuIterator, bool vegetaHasBeenPrinted, bool gokuHasBeenPrinted, Mat result)
+{
+	if (vegetaHasBeenPrinted == false)
+	{
+		drawMissingCharacter(result, Vegeta);
+		(*vegetaIterator)++;
+		if (*vegetaIterator > IDLE_FRAMES_TO_DISAPPEAR)
+		{
+			*vegetaIterator = 0;
+			vegetaFlag = false;
+			vegiFrameIndex = 0;
+		}
+	}
+	if (gokuHasBeenPrinted == false)
+	{
+		drawMissingCharacter(result, Goku);
+		(*gokuIterator)++;
+		if (*gokuIterator > IDLE_FRAMES_TO_DISAPPEAR)
+		{
+			*gokuIterator = 0;
+			gokuFlag = false;
+			gokuFrameIndex = 0;
+		}
+	}
+}
+
+Point centerOfTwoPoints(Point a, Point b)
+{
+	return Point(abs(a.x - b.x), abs(a.y - b.y));
 }
 
 //Find shapes in a given set of curves and generate changed image
-void findShapesAndDrawCharacters(const Mat sourceHSV, Mat result, vector<vector<Point>> curves)
+bool findShapesAndDrawCharacters(const Mat sourceHSV, Mat result, vector<vector<Point>> curves)
 {
 	cout << "Curves found: " << curves.size() << endl;
 	vector<Point> approx_curve;
 	bool vegetaHasBeenPrinted = false, gokuHasBeenPrinted = false;
-	static int vegetaIterator = 0, gokuIterator = 0; //frames in which vegeta wasnt printed by our alghoritm
+	bool finishFlag = false, fightingFlag = false;
+	static int vegetaIterator = 0, gokuIterator = 0, fightCounter = 0, frameIterator = 0; //frames in which vegeta wasnt printed by our alghoritm
 	for (int i = 0; i < curves.size(); i++)
 	{
 		approxPolyDP(Mat(curves[i]), approx_curve, arcLength(Mat(curves[i]), true)*0.02, true);
@@ -299,53 +353,50 @@ void findShapesAndDrawCharacters(const Mat sourceHSV, Mat result, vector<vector<
 		if (approx_curve.size() == 3 && isTriangleRed(sourceHSV, approx_curve))
 		{
 			gokuHasBeenPrinted = true;
-			drawCharacterCharging(result, approx_curve, Goku);
+			drawCharacter(result, approx_curve, Goku);
 			gokuIterator = 0;
 		}
 		else if (approx_curve.size() == 4 && isSquareBlue(sourceHSV, approx_curve))
 		{
 			vegetaHasBeenPrinted = true;
-			drawCharacterCharging(result, approx_curve, Vegeta);
+			drawCharacter(result, approx_curve, Vegeta);
 			vegetaIterator = 0;
 		}
 	}	
-	if (vegetaHasBeenPrinted == false)
+	if (vegetaFlag && gokuFlag)
+		fightCounter++;
+	else
+		fightCounter = 0;
+	if (fightCounter > FRAMES_TO_BEGIN_FIGHT)
 	{
-		drawMissingCharacter(result, Vegeta);
-		vegetaIterator++;
-		if (vegetaIterator > IDLE_FRAMES_TO_DISAPPEAR)
-		{
-			vegetaIterator = 0;
-			vegetaFlag = false;
-			vegiFrameIndex = 0;
-		}
+		bool didTheyBlowTheUniverse = false;
+		fightingFlag = true;
+		if (didTheyBlowTheUniverse)
+			return true;
 	}
-	if (gokuHasBeenPrinted == false)
+	else
 	{
-		drawMissingCharacter(result, Goku);
-		gokuIterator++;
-		if (gokuIterator > IDLE_FRAMES_TO_DISAPPEAR)
-		{
-			gokuIterator = 0;
-			gokuFlag = false;
-			gokuFrameIndex = 0;
-		}
+		fightingFlag = false;
 	}
-	incrementFrameIndex();
+	drawMissingCharactersIfNeeded(&vegetaIterator, &gokuIterator, vegetaHasBeenPrinted, gokuHasBeenPrinted, result);
+	if (frameIterator % FRAMES_PER_IMAGE == 0)
+		incrementFrameIndex(fightingFlag);
+	frameIterator++;
+	return false;
 }
 
-void handleFrame(Mat frame, int wait = 1)
+bool handleFrame(Mat frame)
 {
 	Mat sourceHSV;
 	cvtColor(frame, sourceHSV, CV_BGR2HSV);
 	Mat resultImage = frame.clone();
 	if (handleEmptyImage(frame))
-		return;
+		return true;
 	
 	Mat edgesImageBGR = cannyImage(frame, 0);
 	vector<vector<Point>> curves;
 	findContours(edgesImageBGR, curves, RETR_TREE, CHAIN_APPROX_SIMPLE);
-	findShapesAndDrawCharacters(sourceHSV, resultImage, curves);
+	bool finishFlag = findShapesAndDrawCharacters(sourceHSV, resultImage, curves);
 
 #ifdef TEST_MULTIPLE_TIMESn
 	Mat edgesImageB = cannyImage(frame, 1);
@@ -363,20 +414,21 @@ void handleFrame(Mat frame, int wait = 1)
 	findShapesAndDrawCharacters(sourceHSV, resultImage, curves3);
 #endif
 	showImages(edgesImageBGR, resultImage);
-	waitKey(wait);
+	waitKey(1);
+	return finishFlag;
 }
 
 //Main loop of the program
 void handleCameraProcessing()
 {
 	Mat frame;
-	VideoCapture cap;
 	if (!cap.open(0))
 		return;
 	for (;;)
 	{
 		cap >> frame;
-		handleFrame(frame);
+		if (handleFrame(frame))
+			return;
 	}
 }
 
@@ -397,5 +449,6 @@ int main()
 {
 	initializeGokuAndVegetaImages(vegeta, goku);
 	handleCameraProcessing();
+	cout << "Application finished processing" << endl;
 	return 0;
 }
