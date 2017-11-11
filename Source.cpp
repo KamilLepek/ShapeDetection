@@ -36,11 +36,9 @@ using namespace std;
 //Determines how many frames should we present the same image
 #define FRAMES_PER_IMAGE 10
 
-//if defined then we get better edge detection but we loose performance
-#define TEST_MULTIPLE_TIMES
-
 enum character { Vegeta, Goku};
 
+//Handles capturing frames from video camera
 VideoCapture cap;
 
 //Vegeta and goku animations
@@ -381,6 +379,29 @@ void drawMissingCharactersIfNeeded(int *vegetaIterator, int *gokuIterator, bool 
 	}
 }
 
+
+//Returns true if the main loop(detection) has ended and were about to print ending animation, returns false otherwise
+//Handles flag responsible for fighting animation
+bool handleFightCounterAndIncrementFrameIndex(int *fightCounter, bool *fightingFlag, int *frameIterator)
+{
+	if (vegetaFlag && gokuFlag)
+		(*fightCounter)++;
+	else
+		*fightCounter = 0;
+	if (*fightCounter > FRAMES_TO_BEGIN_FIGHT)
+	{
+		*fightingFlag = true;
+		if (gokuFrameIndex == 11 && vegiFrameIndex == 11)
+			return true;
+	}
+	else
+		*fightingFlag = false;
+	if (*frameIterator % FRAMES_PER_IMAGE == 0)
+		incrementFrameIndex(*fightingFlag);
+	(*frameIterator)++;
+	return false;
+}
+
 //Find shapes in a given set of curves and generate changed image
 bool findShapesAndDrawCharacters(const Mat sourceHSV, Mat result, vector<vector<Point>> curves)
 {
@@ -408,26 +429,14 @@ bool findShapesAndDrawCharacters(const Mat sourceHSV, Mat result, vector<vector<
 			vegetaIterator = 0;
 		}
 	}	
-	if (vegetaFlag && gokuFlag)
-		fightCounter++;
-	else
-		fightCounter = 0;
-	if (fightCounter > FRAMES_TO_BEGIN_FIGHT)
-	{
-		bool didTheyBlowTheUniverse = false;
-		fightingFlag = true;
-		if (didTheyBlowTheUniverse)
-			return true;
-	}
-	else
-	{
-		fightingFlag = false;
-	}
 	drawMissingCharactersIfNeeded(&vegetaIterator, &gokuIterator, vegetaHasBeenPrinted, gokuHasBeenPrinted, result);
-	if (frameIterator % FRAMES_PER_IMAGE == 0)
-		incrementFrameIndex(fightingFlag);
-	frameIterator++;
-	return false;
+	return handleFightCounterAndIncrementFrameIndex(&fightCounter, &fightingFlag, &frameIterator);
+}
+
+//Handle ending animation
+void endingAnimation(Mat image)
+{
+	for (;;);
 }
 
 bool handleFrame(Mat frame)
@@ -443,23 +452,10 @@ bool handleFrame(Mat frame)
 	findContours(edgesImageBGR, curves, RETR_TREE, CHAIN_APPROX_SIMPLE);
 	bool finishFlag = findShapesAndDrawCharacters(sourceHSV, resultImage, curves);
 
-#ifdef TEST_MULTIPLE_TIMESn
-	Mat edgesImageB = cannyImage(frame, 1);
-	Mat edgesImageG = cannyImage(frame, 2);
-	Mat edgesImageR = cannyImage(frame, 3);
-	vector<vector<Point>> curves1, curves2, curves3;
-	
-	findContours(edgesImageB, curves1, RETR_TREE, CHAIN_APPROX_SIMPLE);
-	findShapesAndDrawCharacters(sourceHSV, resultImage, curves1);
-
-	findContours(edgesImageG, curves2, RETR_TREE, CHAIN_APPROX_SIMPLE);
-	findShapesAndDrawCharacters(sourceHSV, resultImage, curves2);
-
-	findContours(edgesImageR, curves3, RETR_TREE, CHAIN_APPROX_SIMPLE);
-	findShapesAndDrawCharacters(sourceHSV, resultImage, curves3);
-#endif
 	showImages(edgesImageBGR, resultImage);
 	waitKey(1);
+	if (finishFlag)
+		endingAnimation(resultImage);
 	return finishFlag;
 }
 
@@ -495,6 +491,6 @@ int main()
 	initializeGokuAndVegetaImages(vegeta, goku);
 	handleCameraProcessing();
 	cout << "Application finished processing" << endl;
-	waitKey(0);
+	waitKey(10000);
 	return 0;
 }
