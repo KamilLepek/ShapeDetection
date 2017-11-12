@@ -20,8 +20,14 @@ using namespace std;
 //Curves smaller than this will be ignored in computing
 #define CURVE_SIZE_IGNORING_MARGIN 2000
 
+//Epsilon
+#define CURVE_DETECTING_ERROR 0.02
+
 //Number of frames that are being read from files for each character
 #define FRAME_NUMBER 12
+
+//Number of FRAME_NUMBERs that are representing idle character
+#define IDLE_FRAME_NUMBER 4
 
 //After this amount of frames of not being detected character dissapears
 //(implemented in order to avoid character dissapearing or loosing animation if 1 frame out of nowhere doesnt recognize edges)
@@ -39,9 +45,21 @@ using namespace std;
 //To correct rotation of the energy image on the ending animation
 #define ROTATION_CORRECTION 1.1388
 
+//Rotation constants
 #define PI 3.1415
 #define RADIANS_TO_DEGREES 180/PI
 #define DEGREES_TO_RADIANS PI/180
+
+//Constraints on red color detecting
+#define RED_HUE_BOTTOM_CONSTRAINT 310
+#define RED_HUE_TOP_CONSTRAINT 40
+
+//Constraints on blue color detecting
+#define BLUE_HUE_BOTTOM_CONSTRAINT 170
+#define BLUE_HUE_TOP_CONSTRAINT 280
+
+//Amount of fading frames at the end
+#define FADING_FRAMES 255
 
 enum character { Vegeta, Goku};
 
@@ -71,52 +89,18 @@ bool gokuFlag = false;
 int vegiFrameIndex = 0;
 int gokuFrameIndex = 0;
 
-//Canny 2-d matrix (R G or B plane)
-Mat cannyPlane(Mat plane)
+//Canny whole immage
+Mat cannyImage(const Mat source)
 {
 	Mat result;
+	
+	Mat gray;
+	cvtColor(source, gray, CV_BGR2GRAY);
+
 	Mat blurredGray;
-	GaussianBlur(plane, blurredGray, Size(KSIZE_X, KSIZE_Y), GAUSSIAN_X);
+	GaussianBlur(gray, blurredGray, Size(KSIZE_X, KSIZE_Y), GAUSSIAN_X);
 
 	Canny(blurredGray, result, THRESH_LOW, THRESH_HIGH, APERTURE);
-	return result;
-}
-
-//Canny R, G, B or whole image
-//BGR: 1-B, 2-G, 3-R, else - grayscale whole
-Mat cannyImage(const Mat source, const int BGR)
-{
-	Mat planes[3];
-	split(source, planes);
-
-	Mat result;
-	if (BGR != 0)
-	{
-		switch (BGR)
-		{
-			case 1:
-				result = cannyPlane(planes[0]);
-				break;
-			case 2:
-				result = cannyPlane(planes[1]);
-				break;
-			case 3:
-				result = cannyPlane(planes[2]);
-				break;
-			default:
-				break;
-		}
-	}
-	else
-	{
-		Mat gray;
-		cvtColor(source, gray, CV_BGR2GRAY);
-
-		Mat blurredGray;
-		GaussianBlur(gray, blurredGray, Size(KSIZE_X, KSIZE_Y), GAUSSIAN_X);
-
-		Canny(blurredGray, result, THRESH_LOW, THRESH_HIGH, APERTURE);
-	}
 	return result;
 }
 
@@ -144,12 +128,6 @@ Point massCenterOfCurve(vector<Point> curve)
 {
 	Moments moment = moments(curve, false);
 	return Point(moment.m10 / moment.m00, moment.m01 / moment.m00);
-}
-
-//Sets given label in the image on specified curve center of mass
-void setLabel(const Mat image, const string label, vector<Point> curve)
-{
-	putText(image, label, massCenterOfCurve(curve), 16, 0.5, CV_RGB(0, 0, 0), 1, 8);
 }
 
 //Returns average hue of pixels specified in a square 2*radius x 2*radius with specified center (all in HSV)
@@ -182,7 +160,7 @@ bool isTriangleRed(const Mat sourceHSV, vector<Point> triangle)
 	}
 	radius /= 4;
 	int colour = approximateColourInSquare(sourceHSV, massCenter, radius);
-	if (colour < 40 || colour > 310)
+	if (colour < RED_HUE_TOP_CONSTRAINT || colour > RED_HUE_BOTTOM_CONSTRAINT)
 		return true;
 	return false;
 }
@@ -192,7 +170,7 @@ bool isSquareBlue(const Mat sourceHSV, vector<Point> square)
 	Point massCenter = massCenterOfCurve(square);
 	int radius = norm(square[0] - massCenter) / 4; //size of the rectangle in which we will check the colour 
 	int colour = approximateColourInSquare(sourceHSV, massCenter, radius);
-	if (colour > 170 && colour < 280)
+	if (colour > BLUE_HUE_BOTTOM_CONSTRAINT && colour < BLUE_HUE_TOP_CONSTRAINT)
 		return true;
 	return false;
 }
@@ -255,7 +233,7 @@ Mat resizeHero(character hero)
 	return im;
 }
 
-//Masks the background of character image so that we only see the character itself
+//Masks the green background of character image so that we only see the character itself
 Mat mask(Mat characterFrame, Mat partOfWholeImage)
 {
 	Mat outputImage = Mat(characterFrame.size(), characterFrame.type());
@@ -338,26 +316,26 @@ void drawMissingCharacter(Mat result, character hero)
 	}
 }
 
-//To loop "charging animations"
+//To loop "charging animations" and handle changing to fight animation
 void incrementFrameIndex(bool fightingFlag)
 {
 	if (!fightingFlag)
 	{
 		vegiFrameIndex++;
 		gokuFrameIndex++;
-		if (vegiFrameIndex < 1 || vegiFrameIndex > 3)
+		if (vegiFrameIndex < 1 || vegiFrameIndex >= IDLE_FRAME_NUMBER)
 			vegiFrameIndex = 1;
-		if (gokuFrameIndex < 1 || gokuFrameIndex > 3)
+		if (gokuFrameIndex < 1 || gokuFrameIndex >= IDLE_FRAME_NUMBER)
 			gokuFrameIndex = 1;
 	}
 	else
 	{
 		vegiFrameIndex++;
 		gokuFrameIndex++;
-		if (vegiFrameIndex < 4 || vegiFrameIndex > 11)
-			vegiFrameIndex = 4;
-		if (gokuFrameIndex < 4 || gokuFrameIndex > 11)
-			gokuFrameIndex = 4;
+		if (vegiFrameIndex < IDLE_FRAME_NUMBER || vegiFrameIndex >= FRAME_NUMBER)
+			vegiFrameIndex = IDLE_FRAME_NUMBER;
+		if (gokuFrameIndex < IDLE_FRAME_NUMBER || gokuFrameIndex >= FRAME_NUMBER)
+			gokuFrameIndex = IDLE_FRAME_NUMBER;
 	}
 }
 
@@ -401,7 +379,7 @@ bool handleFightCounterAndIncrementFrameIndex(int *fightCounter, bool *fightingF
 	if (*fightCounter > FRAMES_TO_BEGIN_FIGHT)
 	{
 		*fightingFlag = true;
-		if (gokuFrameIndex == 11 && vegiFrameIndex == 11)
+		if (gokuFrameIndex == FRAME_NUMBER - 1 && vegiFrameIndex == FRAME_NUMBER - 1)
 			return true;
 	}
 	else
@@ -416,26 +394,26 @@ bool handleFightCounterAndIncrementFrameIndex(int *fightCounter, bool *fightingF
 bool findShapesAndDrawCharacters(const Mat sourceHSV, Mat result, vector<vector<Point>> curves)
 {
 	cout << "Curves found: " << curves.size() << endl;
-	vector<Point> approx_curve;
+	vector<Point> approxCurve;
 	bool vegetaHasBeenPrinted = false, gokuHasBeenPrinted = false;
 	bool finishFlag = false, fightingFlag = false;
 	static int vegetaIterator = 0, gokuIterator = 0, fightCounter = 0, frameIterator = 0; //frames in which vegeta wasnt printed by our alghoritm
 	for (int i = 0; i < curves.size(); i++)
 	{
-		approxPolyDP(Mat(curves[i]), approx_curve, arcLength(Mat(curves[i]), true)*0.02, true);
+		approxPolyDP(Mat(curves[i]), approxCurve, arcLength(Mat(curves[i]), true)*CURVE_DETECTING_ERROR, true);
 		if (fabs(contourArea(curves[i])) < CURVE_SIZE_IGNORING_MARGIN ||
-			!isContourConvex(approx_curve)) // ignore if curve is not convex or its relatively small
+			!isContourConvex(approxCurve)) // ignore if curve is not convex or its relatively small
 			continue;
-		if (approx_curve.size() == 3 && isTriangleRed(sourceHSV, approx_curve))
+		if (approxCurve.size() == 3 && isTriangleRed(sourceHSV, approxCurve))
 		{
 			gokuHasBeenPrinted = true;
-			drawCharacter(result, approx_curve, Goku);
+			drawCharacter(result, approxCurve, Goku);
 			gokuIterator = 0;
 		}
-		else if (approx_curve.size() == 4 && isSquareBlue(sourceHSV, approx_curve))
+		else if (approxCurve.size() == 4 && isSquareBlue(sourceHSV, approxCurve))
 		{
 			vegetaHasBeenPrinted = true;
-			drawCharacter(result, approx_curve, Vegeta);
+			drawCharacter(result, approxCurve, Vegeta);
 			vegetaIterator = 0;
 		}
 	}	
@@ -563,9 +541,21 @@ void endingAnimation(Mat image)
 
 	imshow("Result", image);
 	waitKey(1);
-	for (;;);
+	for (int i = 0; i < FADING_FRAMES; i++)
+	{
+		for (int j = 0; j < image.rows; j++)
+		{
+			for (int k = 0; k < image.cols; k++)
+			{
+				image.at<Vec3b>(j, k) -= Vec3b(1,1,1);
+			}
+		}
+		imshow("Result", image);
+		waitKey(20);
+	}
 }
 
+//Main method to handle single frame
 bool handleFrame(Mat frame)
 {
 	Mat sourceHSV;
@@ -574,7 +564,7 @@ bool handleFrame(Mat frame)
 	if (handleEmptyImage(frame))
 		return true;
 	
-	Mat edgesImageBGR = cannyImage(frame, 0);
+	Mat edgesImageBGR = cannyImage(frame);
 	vector<vector<Point>> curves;
 	findContours(edgesImageBGR, curves, RETR_TREE, CHAIN_APPROX_SIMPLE);
 	bool finishFlag = findShapesAndDrawCharacters(sourceHSV, resultImage, curves);
@@ -619,6 +609,6 @@ int main()
 	initializeGokuAndVegetaImages(vegeta, goku);
 	handleCameraProcessing();
 	cout << "Application finished processing" << endl;
-	waitKey(10000);
+	waitKey(1000);
 	return 0;
 }
