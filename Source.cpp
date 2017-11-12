@@ -34,7 +34,7 @@ using namespace std;
 #define FRAMES_TO_BEGIN_FIGHT 50
 
 //Determines how many frames should we present the same image
-#define FRAMES_PER_IMAGE 10
+#define FRAMES_PER_IMAGE 1
 
 enum character { Vegeta, Goku};
 
@@ -44,6 +44,9 @@ VideoCapture cap;
 //Vegeta and goku animations
 Mat vegeta[FRAME_NUMBER];
 Mat goku[FRAME_NUMBER];
+
+//Ending frame
+Mat energy;
 
 //Characters coordinates on map
 Point vegetaPoint;
@@ -436,6 +439,89 @@ bool findShapesAndDrawCharacters(const Mat sourceHSV, Mat result, vector<vector<
 //Handle ending animation
 void endingAnimation(Mat image)
 {
+	int sRow, eRow;//start and end row
+	int sCol, eCol;//start and end column
+
+	bool copyOnTop;
+
+	sRow = vegetaPoint.y < gokuPoint.y ? vegetaPoint.y : gokuPoint.y;
+	eRow = vegetaPoint.y + gokuPoint.y - sRow;
+
+	Mat im;
+
+	if (vegetaPoint.x < gokuPoint.x)
+	{
+		flip(energy, im, 1);
+		sCol = vegetaPoint.x;
+		eCol = gokuPoint.x;
+		if (vegetaPoint.y < gokuPoint.y)
+			copyOnTop = true;
+		else
+			copyOnTop = false;
+	}
+	else
+	{
+		im = energy.clone();
+		eCol = vegetaPoint.x;
+		sCol = gokuPoint.x;
+		if (vegetaPoint.y < gokuPoint.y)
+			copyOnTop = false;
+		else
+			copyOnTop = true;
+	}
+	int biggerVerticalSize = vegetaSize.height > gokuSize.height ? vegetaSize.height : gokuSize.height;
+	Mat imageToCopy;
+	Size size(abs(vegetaPoint.x - gokuPoint.x) - abs(vegetaPoint.x - gokuPoint.x) % 2, biggerVerticalSize);
+	resize(im, imageToCopy, size);//przeskaluj imageToCopy
+
+	//stworz outter frame rozmiarow roznica postaci + wierszowo wielkosci wierszowej image to copy
+	Mat outterFrame = Mat::zeros(abs(vegetaPoint.y - gokuPoint.y) + imageToCopy.rows, abs(vegetaPoint.x - gokuPoint.x), image.type());
+	sRow -= imageToCopy.rows / 2;
+	eRow += imageToCopy.rows / 2;
+	//wklej imageToCopy do outter frame, trzeba zdeterminowac czy u gory czy na dole
+	if (copyOnTop)
+		imageToCopy.copyTo(outterFrame.rowRange(0, imageToCopy.rows).colRange(0, imageToCopy.cols));
+	else
+		imageToCopy.copyTo(outterFrame.rowRange(outterFrame.rows - 1 - imageToCopy.rows, outterFrame.rows - 1).colRange(0, imageToCopy.cols));
+	//obróæ outter frame
+	double angle = atan((double)(outterFrame.rows - imageToCopy.rows) / (double)outterFrame.cols);
+	Point center = copyOnTop ? Point(0, imageToCopy.rows / 2) : Point(0, outterFrame.rows - imageToCopy.rows / 2);
+	angle = angle * 205 / 3.1415;
+	if (copyOnTop)
+		angle = -angle;
+	Mat rot_mat(2, 3, CV_32FC1);
+	rot_mat = getRotationMatrix2D(center, angle, 1);
+	Mat resultFrame;
+	warpAffine(outterFrame, resultFrame, rot_mat, outterFrame.size());
+
+	//przeskalij horizontally resultFrame
+
+	double scalingFactor = (double)resultFrame.cols / (double)resultFrame.cols*cos(angle*3.1415/205);
+
+	Point2f srcTri[3];
+	Point2f dstTri[3];
+
+	srcTri[0] = Point2f(0, 0);
+	srcTri[1] = Point2f(scalingFactor * (resultFrame.cols - 1), 0);
+	srcTri[2] = Point2f(scalingFactor * (resultFrame.cols - 1), resultFrame.rows - 1);
+
+	dstTri[0] = Point2f(0, 0);
+	dstTri[1] = Point2f(resultFrame.cols - 1, 0);
+	dstTri[2] = Point2f(resultFrame.cols - 1, resultFrame.rows - 1);
+
+	Mat warp_mat(2, 3, CV_32FC1);
+	warp_mat = getAffineTransform(srcTri, dstTri);
+
+	Mat ostateczne;
+	warpAffine(resultFrame, ostateczne, warp_mat, resultFrame.size());
+
+	//TODO: mask, deletion of last frame glow on vegeta and goku, ALSO REFACTOR this method....
+
+	ostateczne.copyTo(image.rowRange(sRow, eRow).
+		colRange(sCol, eCol));
+
+	imshow("Result", image);
+	waitKey(1);
 	for (;;);
 }
 
@@ -476,6 +562,7 @@ void handleCameraProcessing()
 // Method to initialize frames of goku and vegeta from files
 void initializeGokuAndVegetaImages(Mat *vegeta, Mat *goku)
 {
+	energy = imread("ANIMATIONS/energy.png");
 	for (int i = 0; i < FRAME_NUMBER; i++)
 	{
 		stringstream veg, gok;
