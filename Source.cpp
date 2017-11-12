@@ -34,7 +34,14 @@ using namespace std;
 #define FRAMES_TO_BEGIN_FIGHT 50
 
 //Determines how many frames should we present the same image
-#define FRAMES_PER_IMAGE 1
+#define FRAMES_PER_IMAGE 7
+
+//To correct rotation of the energy image on the ending animation
+#define ROTATION_CORRECTION 1.1388
+
+#define PI 3.1415
+#define RADIANS_TO_DEGREES 180/PI
+#define DEGREES_TO_RADIANS PI/180
 
 enum character { Vegeta, Goku};
 
@@ -436,24 +443,103 @@ bool findShapesAndDrawCharacters(const Mat sourceHSV, Mat result, vector<vector<
 	return handleFightCounterAndIncrementFrameIndex(&fightCounter, &fightingFlag, &frameIterator);
 }
 
+//Determines the affine transofmration required to resize vertically by 1/scaleFactor
+Mat getAffineScale(double scalingFactor, Mat rotatedOutterFrame)
+{
+	Point2f srcTri[3];
+	Point2f dstTri[3];
+
+	srcTri[0] = Point2f(0, 0);
+	srcTri[1] = Point2f(scalingFactor * (rotatedOutterFrame.cols - 1), 0);
+	srcTri[2] = Point2f(scalingFactor * (rotatedOutterFrame.cols - 1), rotatedOutterFrame.rows - 1);
+
+	dstTri[0] = Point2f(0, 0);
+	dstTri[1] = Point2f(rotatedOutterFrame.cols - 1, 0);
+	dstTri[2] = Point2f(rotatedOutterFrame.cols - 1, rotatedOutterFrame.rows - 1);
+
+	return getAffineTransform(srcTri, dstTri);
+}
+
+//Masks black background on the image with the actual background
+void maskBlackBackground(Mat imageWithBlackBackground, Mat actualBackground, int startRow, int startCol)
+{
+	for (int i = 0; i < imageWithBlackBackground.rows; i++)
+	for (int j = 0; j < imageWithBlackBackground.cols; j++)
+	if (imageWithBlackBackground.at<Vec3b>(i, j)[0] < 10 &&
+		imageWithBlackBackground.at<Vec3b>(i, j)[1] < 10 &&
+		imageWithBlackBackground.at<Vec3b>(i, j)[2] < 10)
+		imageWithBlackBackground.at<Vec3b>(i, j) = actualBackground.at<Vec3b>(startRow + i, startCol + j);
+}
+
+//Affine transformations on the original energyImage in order to put it on the background that it connects two characters
+Mat getFinalEnergyImageOnTheMap(int *startRow, int *endRow, int *startCol, bool copyOnTop, Mat energyImage, Mat backgroundImage)
+{
+	//determines how much we need to resize vertically the energy image
+	int biggerVerticalSize = vegetaSize.height > gokuSize.height ? vegetaSize.height : gokuSize.height;
+
+	//resized energy image
+	Mat imageToCopy;
+	Size size(abs(vegetaPoint.x - gokuPoint.x) - abs(vegetaPoint.x - gokuPoint.x) % 2, biggerVerticalSize);
+	resize(energyImage, imageToCopy, size);
+
+	//Frame big enough that we can copy energy image into it and rotate it so that we connect 2 characters with it
+	Mat outterFrame = Mat::zeros(abs(vegetaPoint.y - gokuPoint.y) + imageToCopy.rows, abs(vegetaPoint.x - gokuPoint.x), backgroundImage.type());
+
+	//Row change in case characters are on the same vertical height and need some more space
+	*startRow -= imageToCopy.rows / 2;
+	*endRow += imageToCopy.rows / 2;
+
+	//cope imageToCopy onto outter frame on top of it or in the bottom
+	if (copyOnTop)
+		imageToCopy.copyTo(outterFrame.rowRange(0, imageToCopy.rows).colRange(0, imageToCopy.cols));
+	else
+		imageToCopy.copyTo(outterFrame.rowRange(outterFrame.rows - 1 - imageToCopy.rows, outterFrame.rows - 1).colRange(0, imageToCopy.cols));
+
+	//determine the angle and center of rotation to rotate outter frame in order to connect characters
+	double angle = atan((double)(outterFrame.rows - imageToCopy.rows) / (double)outterFrame.cols);
+	Point center = copyOnTop ? Point(0, imageToCopy.rows / 2) : Point(0, outterFrame.rows - imageToCopy.rows / 2);
+	angle = angle * ROTATION_CORRECTION * RADIANS_TO_DEGREES;
+	if (copyOnTop)
+		angle = -angle;
+
+	//Rotate outter frame and place result into rotatedOutterFrame
+	Mat rotationMatrix = getRotationMatrix2D(center, angle, 1);
+	Mat rotatedOutterFrame;
+	warpAffine(outterFrame, rotatedOutterFrame, rotationMatrix, outterFrame.size());
+
+	//Determines how much we have resized the vertical size of the image by rotating it
+	double scalingFactor = (double)rotatedOutterFrame.cols / (double)rotatedOutterFrame.cols*cos(angle*DEGREES_TO_RADIANS / ROTATION_CORRECTION);
+
+	Mat affineScale = getAffineScale(scalingFactor, rotatedOutterFrame);
+
+	//Resize the image in order to connect two characters
+	Mat finalEnergyImage;
+	warpAffine(rotatedOutterFrame, finalEnergyImage, affineScale, rotatedOutterFrame.size());
+
+	//Change black background to actual background
+	maskBlackBackground(finalEnergyImage, backgroundImage, *startRow, *startCol);
+
+	return finalEnergyImage;
+}
+
 //Handle ending animation
 void endingAnimation(Mat image)
 {
-	int sRow, eRow;//start and end row
-	int sCol, eCol;//start and end column
+	//parameteres determining where we need to insert the energy image on the original image
+	int startRow = vegetaPoint.y < gokuPoint.y ? vegetaPoint.y : gokuPoint.y;
+	int endRow = vegetaPoint.y + gokuPoint.y - startRow;
+	int startCol, endCol;
 
 	bool copyOnTop;
 
-	sRow = vegetaPoint.y < gokuPoint.y ? vegetaPoint.y : gokuPoint.y;
-	eRow = vegetaPoint.y + gokuPoint.y - sRow;
+	Mat im;//original energy image will get flipped horizontally if necessary
 
-	Mat im;
-
+	//Calculate if we need to flip the image and what will be the size of the frame in which we will do all the calculation
 	if (vegetaPoint.x < gokuPoint.x)
 	{
 		flip(energy, im, 1);
-		sCol = vegetaPoint.x;
-		eCol = gokuPoint.x;
+		startCol = vegetaPoint.x;
+		endCol = gokuPoint.x;
 		if (vegetaPoint.y < gokuPoint.y)
 			copyOnTop = true;
 		else
@@ -462,63 +548,18 @@ void endingAnimation(Mat image)
 	else
 	{
 		im = energy.clone();
-		eCol = vegetaPoint.x;
-		sCol = gokuPoint.x;
+		endCol = vegetaPoint.x;
+		startCol = gokuPoint.x;
 		if (vegetaPoint.y < gokuPoint.y)
 			copyOnTop = false;
 		else
 			copyOnTop = true;
 	}
-	int biggerVerticalSize = vegetaSize.height > gokuSize.height ? vegetaSize.height : gokuSize.height;
-	Mat imageToCopy;
-	Size size(abs(vegetaPoint.x - gokuPoint.x) - abs(vegetaPoint.x - gokuPoint.x) % 2, biggerVerticalSize);
-	resize(im, imageToCopy, size);//przeskaluj imageToCopy
+	
+	Mat finalEnergyImage = getFinalEnergyImageOnTheMap(&startRow, &endRow, &startCol, copyOnTop, im, image);
 
-	//stworz outter frame rozmiarow roznica postaci + wierszowo wielkosci wierszowej image to copy
-	Mat outterFrame = Mat::zeros(abs(vegetaPoint.y - gokuPoint.y) + imageToCopy.rows, abs(vegetaPoint.x - gokuPoint.x), image.type());
-	sRow -= imageToCopy.rows / 2;
-	eRow += imageToCopy.rows / 2;
-	//wklej imageToCopy do outter frame, trzeba zdeterminowac czy u gory czy na dole
-	if (copyOnTop)
-		imageToCopy.copyTo(outterFrame.rowRange(0, imageToCopy.rows).colRange(0, imageToCopy.cols));
-	else
-		imageToCopy.copyTo(outterFrame.rowRange(outterFrame.rows - 1 - imageToCopy.rows, outterFrame.rows - 1).colRange(0, imageToCopy.cols));
-	//obróæ outter frame
-	double angle = atan((double)(outterFrame.rows - imageToCopy.rows) / (double)outterFrame.cols);
-	Point center = copyOnTop ? Point(0, imageToCopy.rows / 2) : Point(0, outterFrame.rows - imageToCopy.rows / 2);
-	angle = angle * 205 / 3.1415;
-	if (copyOnTop)
-		angle = -angle;
-	Mat rot_mat(2, 3, CV_32FC1);
-	rot_mat = getRotationMatrix2D(center, angle, 1);
-	Mat resultFrame;
-	warpAffine(outterFrame, resultFrame, rot_mat, outterFrame.size());
-
-	//przeskalij horizontally resultFrame
-
-	double scalingFactor = (double)resultFrame.cols / (double)resultFrame.cols*cos(angle*3.1415/205);
-
-	Point2f srcTri[3];
-	Point2f dstTri[3];
-
-	srcTri[0] = Point2f(0, 0);
-	srcTri[1] = Point2f(scalingFactor * (resultFrame.cols - 1), 0);
-	srcTri[2] = Point2f(scalingFactor * (resultFrame.cols - 1), resultFrame.rows - 1);
-
-	dstTri[0] = Point2f(0, 0);
-	dstTri[1] = Point2f(resultFrame.cols - 1, 0);
-	dstTri[2] = Point2f(resultFrame.cols - 1, resultFrame.rows - 1);
-
-	Mat warp_mat(2, 3, CV_32FC1);
-	warp_mat = getAffineTransform(srcTri, dstTri);
-
-	Mat ostateczne;
-	warpAffine(resultFrame, ostateczne, warp_mat, resultFrame.size());
-
-	//TODO: mask, deletion of last frame glow on vegeta and goku, ALSO REFACTOR this method....
-
-	ostateczne.copyTo(image.rowRange(sRow, eRow).
-		colRange(sCol, eCol));
+	finalEnergyImage.copyTo(image.rowRange(startRow, endRow).
+		colRange(startCol, endCol));
 
 	imshow("Result", image);
 	waitKey(1);
