@@ -607,8 +607,15 @@ void initializeGokuAndVegetaImages(Mat *vegeta, Mat *goku)
 int main()
 {
 	initializeGokuAndVegetaImages(vegeta, goku);
-	handleCameraProcessing();
-	cout << "Application finished processing" << endl;
-	waitKey(1000);
+	namedWindow("Result", WINDOW_NORMAL);
+	resizeWindow("Result", 1280, 720);
+	for (;;)
+	{
+		handleCameraProcessing();
+		cout << "Press any key to play again!" << endl;
+		waitKey(0);
+		vegiFrameIndex = 0;
+		gokuFrameIndex = 0;
+	}
 	return 0;
 }
